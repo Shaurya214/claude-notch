@@ -72,10 +72,23 @@ export default class ClaudeNotch extends Extension {
         Main.panel.addToStatusArea(this.uuid, this._pill, 0, 'center');
 
         this._card = new St.BoxLayout({style_class: 'claude-notch-card', vertical: true, visible: false});
-        this._usage = new St.Label({style_class: 'claude-notch-usage'});
+        this._usage = new St.Label({style_class: 'claude-notch-usage', y_align: CENTER});
+        // The gear is always there, so the header stays even when the usage line is hidden.
+        const header = new St.BoxLayout({style_class: 'claude-notch-header'});
+        const gear = new St.Button({
+            style_class: 'claude-notch-chip', accessible_name: 'Settings', x_expand: true, x_align: Clutter.ActorAlign.END,
+            child: new St.Icon({icon_name: 'emblem-system-symbolic', style_class: 'claude-notch-gear'}),
+        });
+        gear.connect('clicked', () => {
+            this._expanded = false;
+            this._render();
+            this.openPreferences();
+        });
+        header.add_child(this._usage);
+        header.add_child(gear);
         this._perms = new St.BoxLayout({style_class: 'claude-notch-section', vertical: true});
         this._rows = new St.BoxLayout({style_class: 'claude-notch-section', vertical: true});
-        [this._usage, this._perms, this._rows].forEach(a => this._card.add_child(a));
+        [header, this._perms, this._rows].forEach(a => this._card.add_child(a));
         this._card.set_pivot_point(0.5, 0);
         Main.layoutManager.addTopChrome(this._card);
     }

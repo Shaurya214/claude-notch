@@ -36,6 +36,11 @@
   font-size: 9pt;
 }
 
+.claude-notch-gear {
+  icon-size: 14px;
+  color: #bbb;
+}
+
 .claude-notch-row-line { spacing: 6px; }
 
 .claude-notch-row {

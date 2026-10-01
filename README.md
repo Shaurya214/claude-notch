@@ -10,7 +10,7 @@ A dynamic-island style notch for **Claude Code on Linux (GNOME 46, Wayland)**. I
 - Usage meters: 5-hour and 7-day limits, context % per session (Pro/Max)
 - Click a session to focus its terminal window
 - Sound and a pulse when Claude finishes or needs you
-- Settings (`gnome-extensions prefs claude-notch@shaurya214.github.io`, or the Extensions app): sound, pulse, open-automatically, usage line, and the five status colors
+- Settings: the gear at the top right of the card, `gnome-extensions prefs claude-notch@shaurya214.github.io`, or the Extensions app: sound, pulse, open-automatically, usage line, and the five status colors
 
 ## How it works
 
