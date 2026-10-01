@@ -42,6 +42,8 @@ What `install` changes:
 
 `./notch-hook.py uninstall` reverts all of it. It is safe to run either command repeatedly.
 
+The hook commands point at this checkout, so run `uninstall` before moving or deleting it. If you forget, the hooks do nothing (they check that the script exists first) and Claude Code carries on as normal, but the notch stays dark until you reinstall.
+
 ## Tests
 
 ```sh
@@ -58,3 +60,7 @@ The extension itself was checked by running it in a throwaway `gnome-shell --hea
 - With gnome-terminal, every window belongs to one server process, so "jump to terminal" focuses a gnome-terminal window but not always the right one.
 - Usage meters only appear for claude.ai Pro/Max, after the first response in a session.
 - The extension only supports GNOME 46 (Ubuntu 24.04). Other versions need their number added to `metadata.json` and testing.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

@@ -22,7 +22,10 @@ EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostT
           'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure',
           'SubagentStart', 'SubagentStop']
 PY = '/usr/bin/python3' if os.path.exists('/usr/bin/python3') else sys.executable
-CMD = f'{PY} {shlex.quote(str(HERE))}'
+_SCRIPT = shlex.quote(str(HERE))
+# Guarded: if this checkout is moved or deleted the hook must do nothing. Python exits 2 for a missing
+# script, and exit 2 on PreToolUse blocks the tool call.
+CMD = f'[ ! -f {_SCRIPT} ] || {PY} {_SCRIPT}'
 
 
 def parent(pid):
@@ -106,17 +109,26 @@ def edit_settings(change):
     tmp.replace(path)
 
 
+def wrapped_statusline(sl):
+    """The user's own status line command inside ours, if there was one."""
+    parts = shlex.split(sl['command'])
+    rest = parts[parts.index('statusline') + 1:]
+    return rest[0] if rest else None
+
+
 def add_ours(s):
     hooks = s.setdefault('hooks', {})
     for ev in EVENTS:
         groups = hooks.setdefault(ev, [])
-        if not any(ours(h) for g in groups for h in g.get('hooks', [])):
+        mine = [h for g in groups for h in g.get('hooks', []) if ours(h)]
+        for h in mine:
+            h['command'] = CMD  # upgrades an entry written by an older install
+        if not mine:
             # PermissionRequest keeps the default 600s timeout: it waits for your click.
             groups.append({'hooks': [{'type': 'command', 'command': CMD} | ({} if ev == 'PermissionRequest' else {'timeout': 5})]})
     sl = s.get('statusLine') or {}
-    if not ours(sl):
-        old = sl.get('command')
-        s['statusLine'] = {**sl, 'type': 'command', 'command': f'{CMD} statusline' + (f' {shlex.quote(old)}' if old else '')}
+    old = wrapped_statusline(sl) if ours(sl) else sl.get('command')
+    s['statusLine'] = {**sl, 'type': 'command', 'command': f'{CMD} statusline' + (f' {shlex.quote(old)}' if old else '')}
 
 
 def remove_ours(s):
@@ -131,9 +143,9 @@ def remove_ours(s):
         del s['hooks']
     sl = s.get('statusLine')
     if ours(sl):
-        old = shlex.split(sl['command'])[3:]  # [python, script, 'statusline', old?]
+        old = wrapped_statusline(sl)
         if old:
-            sl['command'] = old[0]
+            sl['command'] = old
         else:
             del s['statusLine']
 
