@@ -1,5 +1,8 @@
 // Run: gjs -m tests/test_state.js
-import {newState, apply, prune, summary, preview, resolves, decision, isQuestion, pendingLabel, answerDecision} from '../extension/state.js';
+import {
+    newState, apply, prune, summary, preview, resolves, decision, isQuestion, pendingLabel, answerDecision,
+    answered, statusText, agentLine,
+} from '../extension/state.js';
 
 function eq(a, b, msg) {
     if (JSON.stringify(a) !== JSON.stringify(b))
@@ -56,5 +59,43 @@ eq(resolves(ask, {session_id: 'a', hook_event_name: 'PostToolUse', tool_name: 'A
     tool_input: {...ask.tool_input, answers: {'Size?': 'S'}, annotations: {}}}), true, 'question answered in terminal');
 eq(resolves(ask, {session_id: 'a', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: ask.tool_input}), false, 'tool name must match');
 eq(decision('always', req),{behavior: 'allow', updatedPermissions: [{type: 'addRules', rules: []}]}, 'always skips setMode');
+
+// free-text answers
+const typed = answerDecision(ask, [new Set(['L']), new Set(['Basil'])], ['', 'extra "spicy" ✓']);
+eq(typed.updatedInput.answers, {'Size?': 'L', 'Toppings?': 'Basil, extra "spicy" ✓'}, 'multi-select appends typed text');
+eq(answerDecision(ask, [new Set(['L']), new Set()], ['  my own size ', 'x']).updatedInput.answers['Size?'], 'my own size', 'single-select: typed text replaces pick');
+eq([answered(new Set(), ''), answered(new Set(), '  '), answered(new Set(['a']), ''), answered(new Set(), 'hi')], [false, false, true, true], 'answered()');
+
+// subagents
+const sub = newState();
+const sev = (hook_event_name, extra = {}) => apply(sub, {session_id: 'z', cwd: '/p', claude_pid: 7, hook_event_name, ...extra});
+sev('UserPromptSubmit', {prompt: 'do the thing'});
+sev('SubagentStart', {agent_id: 'a1', agent_type: 'Explore'});
+sev('SubagentStart', {agent_id: 'a2', agent_type: 'general-purpose'});
+sev('PreToolUse', {agent_id: 'a1', tool_name: 'Grep', tool_input: {pattern: 'foo'}});
+eq(sub.sessions.get('z').tool, null, 'subagent tool does not become the session tool');
+eq(agentLine(sub.sessions.get('z').agents.get('a1')), 'Explore · Grep: foo', 'agent shows its tool');
+sev('PostToolUse', {agent_id: 'a1', tool_name: 'Grep', tool_input: {pattern: 'foo'}});
+eq(agentLine(sub.sessions.get('z').agents.get('a1')), 'Explore · working', 'agent idle between tools');
+eq(sev('Stop', {last_assistant_message: 'spawned'}), null, 'no done-alert while agents run');
+eq(summary(sub), {status: 'working', text: '2 agents running'}, 'finished turn but busy agents = working');
+sev('SubagentStop', {agent_id: 'a1', last_assistant_message: 'found it'});
+sev('SubagentStop', {agent_id: 'ghost'});
+eq(sub.sessions.get('z').agents.size, 1, 'unknown agent stop ignored');
+eq(statusText(sub.sessions.get('z')), '1 agent running', 'singular');
+sev('SubagentStop', {agent_id: 'a2', last_assistant_message: 'also done'});
+eq(summary(sub), {status: 'done', text: 'Done'}, 'back to done when agents finish');
+eq(sev('Stop', {last_assistant_message: 'all finished'}), 'done', 'done-alert once agents are gone');
+
+// chat history
+sev('UserPromptSubmit', {prompt: '<task-notification>agent finished</task-notification>'});
+eq(sub.sessions.get('z').history.map(m => [m.role, m.who, m.text]), [
+    ['user', null, 'do the thing'], ['assistant', null, 'spawned'], ['agent', 'Explore', 'found it'],
+    ['agent', 'general-purpose', 'also done'], ['assistant', null, 'all finished'],
+], 'history: prompts, replies, agent reports; system prompts skipped');
+for (let i = 0; i < 20; i++)
+    sev('UserPromptSubmit', {prompt: `p${i}`});
+eq(sub.sessions.get('z').history.length, 12, 'history is capped');
+eq(sub.sessions.get('z').history.at(-1).text, 'p19', 'newest kept');
 
 print('state ok');

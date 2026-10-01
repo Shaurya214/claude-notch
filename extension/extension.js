@@ -2,27 +2,34 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Pango from 'gi://Pango';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
+import * as GrabHelper from 'resource:///org/gnome/shell/ui/grabHelper.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {
-    newState, apply, prune, summary, statusText, preview, resolves, decision, alwaysRules,
-    isQuestion, pendingLabel, answerDecision,
-} from './state.js';
+import {newState, apply, prune, summary, statusText, effectiveStatus, resolves, isQuestion, pendingLabel} from './state.js';
+import {dot, paintDot, permCard, questionCard, agentRows, chatPanel} from './ui.js';
 
 // The shell already promisifies DataInputStream.read_line_async (resolves to [bytes, length]).
 const SOUNDS = {done: 'complete', attention: 'message-new-instant'};
 const CENTER = Clutter.ActorAlign.CENTER;
+const STATUSES = ['working', 'waiting', 'done', 'error', 'idle'];
 
 export default class ClaudeNotch extends Extension {
     enable() {
         this._state = newState();
-        this._pending = []; // [{ev, conn}]: PermissionRequest hooks blocked on our answer
+        this._pending = []; // [{ev, conn, card}]: PermissionRequest hooks blocked on our answer
         this._expanded = false;
+        this._chatFor = null; // session id whose chat panel is open
+        this._chat = null; // {key, actor}: built panel, reused until the history changes
+        this._settings = this.getSettings();
+        this._settingsId = this._settings.connect('changed', () => this._render());
         this._buildUi();
+        // Owner must contain the entry: key focus outside the grab owner gets no keys.
+        this._grab = new GrabHelper.GrabHelper(this._card, {actionMode: Shell.ActionMode.POPUP});
         this._startServer();
         this._pruneId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 15, () => {
             prune(this._state, pid => GLib.file_test(`/proc/${pid}`, GLib.FileTest.EXISTS));
@@ -34,15 +41,18 @@ export default class ClaudeNotch extends Extension {
 
     disable() {
         GLib.source_remove(this._pruneId);
+        if (this._grab.grabbed)
+            this._grab.ungrab({actor: this._card});
         const pending = this._pending;
         this._pending = null;
         pending.forEach(p => p.conn.close(null)); // hooks see EOF and leave it to the terminal dialog
         this._service.stop();
         this._service.close();
         this._removeSocket();
+        this._settings.disconnect(this._settingsId);
         this._pill.destroy();
         this._card.destroy();
-        this._state = this._pill = this._card = this._service = null;
+        this._state = this._pill = this._card = this._service = this._settings = this._grab = this._chat = null;
     }
 
     _buildUi() {
@@ -110,9 +120,10 @@ export default class ClaudeNotch extends Extension {
             this._render();
             return;
         }
-        const p = {ev, conn};
+        const p = {ev, conn, card: null};
         this._pending = [...this._pending, p];
-        this._expanded = true;
+        if (this._settings.get_boolean('auto-expand'))
+            this._expanded = true;
         this._render();
         // Returns on EOF: the hook timed out or was killed.
         await input.read_line_async(GLib.PRIORITY_DEFAULT, null).catch(() => null);
@@ -128,8 +139,10 @@ export default class ClaudeNotch extends Extension {
             logError(e, 'claude-notch: hook went away before the answer'); // terminal dialog still works
         }
         const s = this._state.sessions.get(p.ev.session_id);
-        if (s && payload.behavior)
+        if (s && payload.behavior) {
             s.status = 'working';
+            s.tool = null; // else the row keeps showing the answered request until the next event
+        }
         this._drop(p);
     }
 
@@ -138,13 +151,30 @@ export default class ClaudeNotch extends Extension {
             return;
         this._pending = this._pending.filter(x => x !== p);
         p.conn.close(null);
+        p.card?.destroy();
         if (!this._pending.length)
             this._expanded = false;
         this._render();
     }
 
+    // The card is a chrome actor, so it only gets the keyboard while we hold a grab (like a popup menu).
+    _focusEntry(entry) {
+        if (!this._grab.grabbed)
+            this._grab.grab({actor: this._card, focus: entry});
+        else
+            entry.grab_key_focus();
+    }
+
+    _releaseFocus() {
+        if (this._grab.grabbed)
+            this._grab.ungrab({actor: this._card});
+    }
+
     _alert(kind) {
-        global.display.get_sound_player().play_from_theme(SOUNDS[kind], 'Claude Notch', null);
+        if (this._settings.get_boolean('sound'))
+            global.display.get_sound_player().play_from_theme(SOUNDS[kind], 'Claude Notch', null);
+        if (!this._settings.get_boolean('pulse'))
+            return;
         this._pill.set_pivot_point(0.5, 0.5);
         this._pill.ease({
             scale_x: 1.12, scale_y: 1.12, duration: 140,
@@ -167,13 +197,18 @@ export default class ClaudeNotch extends Extension {
         this._render();
     }
 
+    _colors() {
+        return Object.fromEntries(STATUSES.map(k => [k, this._settings.get_string(`color-${k}`)]));
+    }
+
     _render() {
         if (!this._state)
             return;
+        const colors = this._colors();
         const sum = summary(this._state);
         this._pill.container.visible = !!sum;
         if (sum) {
-            this._dot.style_class = `claude-notch-dot claude-notch-${sum.status}`;
+            paintDot(this._dot, sum.status, colors);
             this._label.text = this._pending.length ? pendingLabel(this._pending[0].ev) : sum.text;
         }
 
@@ -183,14 +218,17 @@ export default class ClaudeNotch extends Extension {
             this._card.ease({opacity: 255, scale_y: 1, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
         this._card.visible = show;
-        if (!show)
+        if (!show) {
+            if (this._grab.grabbed)
+                this._grab.ungrab({actor: this._card});
             return;
+        }
 
         this._renderUsage();
-        // Rebuild permission cards only when the set changes, so a click isn't lost mid-rebuild.
+        // Permission cards are built once per request and kept, so typed text and picks survive other events.
         if (this._permsShown !== this._pending)
             this._renderPerms();
-        this._renderRows();
+        this._renderRows(colors);
 
         const m = Main.layoutManager.primaryMonitor;
         this._card.set_position(Math.round(m.x + (m.width - this._card.width) / 2), m.y + Main.panel.height + 6);
@@ -207,108 +245,48 @@ export default class ClaudeNotch extends Extension {
         if (lim?.seven_day)
             parts.push(`7d ${Math.round(lim.seven_day.used_percentage)}%`);
         this._usage.text = parts.join('      ');
-        this._usage.visible = parts.length > 0;
+        this._usage.visible = parts.length > 0 && this._settings.get_boolean('show-usage');
     }
 
     _renderPerms() {
         this._permsShown = this._pending;
-        this._perms.destroy_all_children();
-        for (const p of this._pending)
-            this._perms.add_child(isQuestion(p.ev) ? this._questionCard(p) : this._permCard(p));
+        this._perms.get_children().forEach(c => this._perms.remove_child(c)); // unparent only: cards live on in p.card
+        for (const p of this._pending) {
+            p.card ??= isQuestion(p.ev)
+                ? questionCard(p, payload => this._reply(p, payload), entry => this._focusEntry(entry), () => this._releaseFocus())
+                : permCard(p, payload => this._reply(p, payload));
+            this._perms.add_child(p.card);
+        }
         this._perms.visible = this._pending.length > 0;
     }
 
-    _wrapped(text, styleClass) {
-        const l = new St.Label({text, style_class: styleClass});
-        l.clutter_text.set({line_wrap: true, line_wrap_mode: Pango.WrapMode.WORD_CHAR, ellipsize: Pango.EllipsizeMode.NONE});
-        return l;
-    }
-
-    _button(buttons, label, cls, onClick) {
-        const b = new St.Button({label, style_class: `claude-notch-btn ${cls}`});
-        b.connect('clicked', onClick);
-        buttons.add_child(b);
-        return b;
-    }
-
-    _permCard(p) {
-        const card = new St.BoxLayout({style_class: 'claude-notch-perm', vertical: true});
-        card.add_child(new St.Label({
-            text: `${GLib.path_get_basename(p.ev.cwd ?? '')} wants to use ${p.ev.tool_name}`,
-            style_class: 'claude-notch-project',
-        }));
-        card.add_child(this._wrapped(preview(p.ev.tool_name, p.ev.tool_input), 'claude-notch-preview'));
-        const buttons = new St.BoxLayout({style_class: 'claude-notch-buttons', x_align: Clutter.ActorAlign.END});
-        this._button(buttons, 'Deny', 'claude-notch-deny', () => this._reply(p, decision('deny', p.ev)));
-        if (alwaysRules(p.ev).length)
-            this._button(buttons, 'Always', '', () => this._reply(p, decision('always', p.ev)));
-        this._button(buttons, 'Allow', 'claude-notch-allow', () => this._reply(p, decision('allow', p.ev)));
-        card.add_child(buttons);
-        return card;
-    }
-
-    // AskUserQuestion: one option click answers a lone single-select question; otherwise pick, then Submit.
-    // Free-text ("Other") answers stay in the terminal.
-    _questionCard(p) {
-        const qs = p.ev.tool_input.questions;
-        const picks = qs.map(() => new Set());
-        const instant = qs.length === 1 && !qs[0].multiSelect;
-        const card = new St.BoxLayout({style_class: 'claude-notch-perm', vertical: true});
-        card.add_child(new St.Label({
-            text: `${GLib.path_get_basename(p.ev.cwd ?? '')} asks`,
-            style_class: 'claude-notch-project',
-        }));
-        const buttons = new St.BoxLayout({style_class: 'claude-notch-buttons', x_align: Clutter.ActorAlign.END});
-        let submit = null;
-        const sync = () => {
-            const ready = picks.every(s => s.size > 0);
-            submit.reactive = ready;
-            submit.opacity = ready ? 255 : 90;
-        };
-
-        qs.forEach((q, i) => {
-            card.add_child(this._wrapped(q.multiSelect ? `${q.question} (pick any)` : q.question, 'claude-notch-question'));
-            const opts = q.options.map(o => {
-                const box = new St.BoxLayout({vertical: true, x_expand: true, x_align: Clutter.ActorAlign.FILL});
-                box.add_child(new St.Label({text: o.label, style_class: 'claude-notch-opt-label', x_align: Clutter.ActorAlign.START}));
-                if (o.description) {
-                    const d = this._wrapped(o.description, 'claude-notch-muted');
-                    d.x_align = Clutter.ActorAlign.START;
-                    box.add_child(d);
-                }
-                const b = new St.Button({child: box, style_class: 'claude-notch-opt', x_expand: true});
-                b.connect('clicked', () => {
-                    if (q.multiSelect && picks[i].has(o.label))
-                        picks[i].delete(o.label);
-                    else if (q.multiSelect)
-                        picks[i].add(o.label);
-                    else
-                        picks[i] = new Set([o.label]);
-                    opts.forEach(([btn, label]) => (btn.checked = picks[i].has(label)));
-                    if (instant)
-                        this._reply(p, answerDecision(p.ev, picks));
-                    else
-                        sync();
-                });
-                card.add_child(b);
-                return [b, o.label];
-            });
-        });
-
-        this._button(buttons, 'Answer in terminal', '', () => this._reply(p, {}));
-        if (!instant) {
-            submit = this._button(buttons, 'Submit', 'claude-notch-allow', () => this._reply(p, answerDecision(p.ev, picks)));
-            sync();
+    _chatPanel(s) {
+        const key = `${s.id}:${s.history.length}`;
+        if (this._chat?.key !== key) {
+            this._chat?.actor.destroy();
+            this._chat = {key, actor: chatPanel(s)};
         }
-        card.add_child(buttons);
-        return card;
+        return this._chat.actor;
     }
 
-    _renderRows() {
-        this._rows.destroy_all_children();
+    _renderRows(colors) {
+        // The cached chat panel must survive the rebuild (and keep its scroll position).
+        for (const c of this._rows.get_children()) {
+            if (c === this._chat?.actor)
+                this._rows.remove_child(c);
+            else
+                c.destroy();
+        }
+        if (!this._state.sessions.has(this._chatFor)) {
+            this._chatFor = null;
+            this._chat?.actor.destroy();
+            this._chat = null;
+        }
+
         for (const s of this._state.sessions.values()) {
+            const line = new St.BoxLayout({style_class: 'claude-notch-row-line', x_expand: true});
             const box = new St.BoxLayout({style_class: 'claude-notch-row-box', x_expand: true});
-            box.add_child(new St.Widget({style_class: `claude-notch-dot claude-notch-${s.status}`, y_align: CENTER}));
+            box.add_child(dot(effectiveStatus(s), colors));
             box.add_child(new St.Label({text: GLib.path_get_basename(s.cwd || '?'), style_class: 'claude-notch-project'}));
             const status = new St.Label({text: statusText(s), style_class: 'claude-notch-muted', x_expand: true});
             status.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -317,7 +295,26 @@ export default class ClaudeNotch extends Extension {
                 box.add_child(new St.Label({text: `${Math.round(s.context)}% ctx`, style_class: 'claude-notch-muted'}));
             const row = new St.Button({child: box, style_class: 'claude-notch-row', x_expand: true});
             row.connect('clicked', () => this._focus(s));
-            this._rows.add_child(row);
+            line.add_child(row);
+
+            const chat = new St.Button({label: 'Chat', style_class: 'claude-notch-chip', y_align: CENTER});
+            chat.checked = this._chatFor === s.id;
+            chat.connect('clicked', () => {
+                this._chatFor = this._chatFor === s.id ? null : s.id;
+                if (!this._chatFor) {
+                    this._chat?.actor.destroy();
+                    this._chat = null;
+                }
+                this._render();
+            });
+            line.add_child(chat);
+            this._rows.add_child(line);
+
+            const agents = agentRows(s);
+            if (agents)
+                this._rows.add_child(agents);
+            if (this._chatFor === s.id)
+                this._rows.add_child(this._chatPanel(s));
         }
     }
 }

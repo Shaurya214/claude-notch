@@ -65,6 +65,7 @@ run('install')
 run('install')  # idempotent
 s = json.loads(settings.read_text())
 assert len(s['hooks']['Stop']) == 2 and len(s['hooks']['PermissionRequest']) == 1, s['hooks']
+assert {'SubagentStart', 'SubagentStop'} <= set(s['hooks']), 'subagent events registered'
 assert s['statusLine']['command'].endswith("statusline 'echo '\"'\"'hi there'\"'\"''") and s['statusLine']['padding'] == 1
 assert (tmp / '.local/share/gnome-shell/extensions/claude-notch@shaurya214.github.io').is_symlink()
 assert run('statusline', "echo 'hi there'", stdin='{}') == 'hi there\n'

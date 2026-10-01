@@ -3,5 +3,6 @@
   "name": "Claude Notch",
   "description": "Dynamic-island style status for Claude Code sessions: live activity, permission approvals, usage limits.",
   "shell-version": ["46"],
+  "settings-schema": "org.gnome.shell.extensions.claude-notch",
   "url": "https://github.com/Shaurya214/claude-notch"
 }

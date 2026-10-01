@@ -12,17 +12,12 @@
   font-weight: bold;
 }
 
+/* The status color is set per widget from the extension settings. */
 .claude-notch-dot {
   width: 9px;
   height: 9px;
   border-radius: 5px;
-  background-color: #777;
 }
-
-.claude-notch-working { background-color: #d97757; }
-.claude-notch-waiting { background-color: #ffc53d; }
-.claude-notch-done { background-color: #4cc38a; }
-.claude-notch-error { background-color: #ff5c5c; }
 
 .claude-notch-card {
   background-color: #000;
@@ -41,6 +36,8 @@
   font-size: 9pt;
 }
 
+.claude-notch-row-line { spacing: 6px; }
+
 .claude-notch-row {
   border-radius: 10px;
   padding: 6px 8px;
@@ -50,6 +47,46 @@
 .claude-notch-row-box { spacing: 8px; }
 .claude-notch-project { font-weight: bold; }
 .claude-notch-muted { color: #999; }
+
+.claude-notch-chip {
+  border-radius: 8px;
+  padding: 3px 10px;
+  background-color: #1c1c1c;
+  color: #bbb;
+  font-size: 9pt;
+}
+
+.claude-notch-chip:hover { background-color: #2b2b2b; }
+.claude-notch-chip:checked { background-color: #3a2a24; color: #d97757; }
+
+.claude-notch-agents {
+  padding-left: 34px;
+  spacing: 2px;
+}
+
+.claude-notch-chat-scroll {
+  max-height: 240px;
+  background-color: #141414;
+  border-radius: 12px;
+  padding: 8px 4px 8px 10px;
+}
+
+.claude-notch-chat {
+  spacing: 3px;
+  padding-right: 12px;
+}
+
+.claude-notch-who {
+  font-size: 8pt;
+  font-weight: bold;
+  color: #888;
+  margin-top: 6px;
+}
+
+.claude-notch-who-user { color: #d97757; }
+.claude-notch-who-assistant { color: #4cc38a; }
+.claude-notch-who-agent { color: #8aa4ff; }
+.claude-notch-msg { color: #e6e6e6; }
 
 .claude-notch-perm {
   background-color: #141414;
@@ -78,6 +115,19 @@
 .claude-notch-opt:hover { background-color: #2f2f2f; }
 .claude-notch-opt:checked { border-color: #d97757; background-color: #2b211d; }
 .claude-notch-opt-label { font-weight: bold; }
+
+.claude-notch-entry {
+  background-color: #222;
+  color: #fff;
+  caret-color: #fff;
+  selection-background-color: #5a3a2e;
+  border-radius: 10px;
+  padding: 7px 10px;
+  border: 2px solid transparent;
+}
+
+.claude-notch-entry:focus { border-color: #d97757; }
+.claude-notch-entry .hint-text { color: #777; }
 
 .claude-notch-buttons { spacing: 8px; }
 

@@ -19,7 +19,8 @@ SOCK = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}') / '
 HERE = Path(__file__).resolve()
 UUID = 'claude-notch@shaurya214.github.io'
 EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
-          'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure']
+          'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure',
+          'SubagentStart', 'SubagentStop']
 PY = '/usr/bin/python3' if os.path.exists('/usr/bin/python3') else sys.executable
 CMD = f'{PY} {shlex.quote(str(HERE))}'
 
@@ -139,6 +140,7 @@ def remove_ours(s):
 
 def install():
     edit_settings(add_ours)
+    subprocess.run(['glib-compile-schemas', str(HERE.parent / 'extension' / 'schemas')], check=True)
     link = Path.home() / '.local/share/gnome-shell/extensions' / UUID
     link.parent.mkdir(parents=True, exist_ok=True)
     if not link.is_symlink():

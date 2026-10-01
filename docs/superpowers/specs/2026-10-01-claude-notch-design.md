@@ -55,9 +55,17 @@ A personal tool for seeing what every Claude Code session is doing and answering
     - hook killed
     - disable and re-enable with a request open
 
+## Subagents, chat, free text, settings (v2), verified against Claude Code 2.1.286
+- **Events:** `SubagentStart` (`agent_id`, `agent_type`) and `SubagentStop` (plus `last_assistant_message`) are registered by `install`. A subagent's own tool calls carry `agent_id`/`agent_type` on `PreToolUse`/`PostToolUse`, so they update that agent's row instead of the session's status. `SubagentStop` for an id never started is ignored (Claude Code emits some).
+- **Background agents outlive the turn:** the main `Stop` can arrive while an agent still runs. So a session with running agents shows as working (`effectiveStatus`), and `Stop` raises the done-alert only when none are running.
+- **Chat:** per session, the last 12 entries from `UserPromptSubmit.prompt`, `Stop.last_assistant_message` and subagent reports, 4000 characters each. Prompts starting with `<` (system notifications) are skipped. History only covers what happened since the extension started. The built panel is cached until the history changes, so scrolling survives other events.
+- **Free text:** an "Other" entry under every question. For a single-select question typed text replaces the pick, for multi-select it is appended. Claude accepts arbitrary text as the answer.
+- **Keyboard:** the card is a chrome actor and gets no keys by default. Clicking the entry takes a `GrabHelper` grab (popup action mode) with the entry focused, from a capture-phase handler (button press or touch begin). Do not hook `key-focus-in` instead: releasing the grab restores the old focus, which re-grabs and traps the keyboard. The grab owner has to be the card (focus outside the owner receives no keys). The entry handles Escape itself, because the grab helper does not see keys aimed at an entry inside its owner. The grab is also released when the card hides.
+- **Cards are built once per request** and re-parented, so typed text and picks survive other requests arriving.
+- **Settings:** GSettings schema `org.gnome.shell.extensions.claude-notch` (compiled by `install`, git-ignored), `prefs.js` with Adw (switches, one color button per status). Changes apply live. Per-status colors are applied as inline styles.
+
 ## Deliberately left out
-- Settings UI (sound on/off etc.): add when a default bothers you.
-- Chat/transcript view
-- Subagent tracking
+- Transcript history from before the extension started (would mean reading the transcript JSONL)
 - Other agents (Codex, Gemini)
 - Per-tab terminal matching
+- Free-text for `ExitPlanMode` / plan approval previews

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.claude-notch" path="/org/gnome/shell/extensions/claude-notch/">
+    <key name="sound" type="b">
+      <default>true</default>
+      <summary>Play a sound</summary>
+      <description>Play a sound when Claude finishes or needs you.</description>
+    </key>
+    <key name="pulse" type="b">
+      <default>true</default>
+      <summary>Pulse the pill</summary>
+      <description>Briefly enlarge the pill when Claude finishes or needs you.</description>
+    </key>
+    <key name="auto-expand" type="b">
+      <default>true</default>
+      <summary>Open the card automatically</summary>
+      <description>Drop the card down when Claude asks for permission or asks a question. When off, click the pill to open it.</description>
+    </key>
+    <key name="show-usage" type="b">
+      <default>true</default>
+      <summary>Show usage limits</summary>
+      <description>Show the 5-hour and 7-day usage line at the top of the card.</description>
+    </key>
+    <key name="color-working" type="s">
+      <default>'#d97757'</default>
+      <summary>Working color</summary>
+    </key>
+    <key name="color-waiting" type="s">
+      <default>'#ffc53d'</default>
+      <summary>Needs-you color</summary>
+    </key>
+    <key name="color-done" type="s">
+      <default>'#4cc38a'</default>
+      <summary>Done color</summary>
+    </key>
+    <key name="color-error" type="s">
+      <default>'#ff5c5c'</default>
+      <summary>Error color</summary>
+    </key>
+    <key name="color-idle" type="s">
+      <default>'#777777'</default>
+      <summary>Idle color</summary>
+    </key>
+  </schema>
+</schemalist>

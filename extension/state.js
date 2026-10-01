@@ -3,6 +3,8 @@
 // Notification types that mean "Claude is blocked on you".
 const ATTENTION = new Set(['permission_prompt', 'elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input']);
 const RANK = {waiting: 4, error: 3, working: 2, done: 1, idle: 0};
+const MAX_HISTORY = 12;
+const MAX_TEXT = 4000;
 
 export function newState() {
     return {sessions: new Map(), limits: null};
@@ -35,12 +37,18 @@ export const isQuestion = req => req.tool_name === 'AskUserQuestion' && Array.is
 
 export const pendingLabel = req => (isQuestion(req) ? req.tool_input.questions[0].question : `Allow ${req.tool_name}?`);
 
-// Claude Code takes the answer as {question text: "label" | "a, b"} merged into the tool input.
-// picks[i] is the Set of labels chosen for question i.
-export function answerDecision(req, picks) {
+// A question counts as answered by a picked option or by typed text.
+export const answered = (picked, other) => picked.size > 0 || !!other?.trim();
+
+// Claude Code takes the answer as {question text: "label" | "a, b" | typed text} merged into the tool input.
+// picks[i] is the Set of labels chosen for question i, others[i] the text typed into its "Other" box.
+// Typed text replaces the pick on a single-select question and is appended on a multi-select one.
+export function answerDecision(req, picks, others = []) {
     const answers = {};
     req.tool_input.questions.forEach((q, i) => {
-        answers[q.question] = q.options.map(o => o.label).filter(l => picks[i].has(l)).join(', ');
+        const labels = q.options.map(o => o.label).filter(l => picks[i].has(l));
+        const other = others[i]?.trim();
+        answers[q.question] = (other ? (q.multiSelect ? [...labels, other] : [other]) : labels).join(', ');
     });
     return {behavior: 'allow', updatedInput: {...req.tool_input, answers}};
 }
@@ -56,6 +64,14 @@ export function decision(kind, req) {
     return kind === 'always' ? {behavior: 'allow', updatedPermissions: alwaysRules(req)} : {behavior: 'allow'};
 }
 
+function remember(s, role, text, who = null) {
+    if (!text?.trim())
+        return;
+    s.history.push({role, who, text: text.trim().slice(0, MAX_TEXT)});
+    if (s.history.length > MAX_HISTORY)
+        s.history.shift();
+}
+
 // Applies one hook/statusline event. Returns 'done' | 'attention' | null for alerting.
 export function apply(state, ev) {
     const id = ev.session_id;
@@ -68,7 +84,10 @@ export function apply(state, ev) {
     }
     let s = state.sessions.get(id);
     if (!s) {
-        s = {id, cwd: '', status: 'idle', tool: null, context: null, error: null, claudePid: null, pids: []};
+        s = {
+            id, cwd: '', status: 'idle', tool: null, context: null, error: null, claudePid: null, pids: [],
+            agents: new Map(), history: [],
+        };
         state.sessions.set(id, s);
     }
     s.cwd = ev.cwd ?? ev.workspace?.current_dir ?? s.cwd;
@@ -76,8 +95,21 @@ export function apply(state, ev) {
     if (ev.pids?.length)
         s.pids = ev.pids;
 
+    // A subagent's own tool calls must not overwrite the session's status/tool.
+    if (ev.agent_id && (name === 'PreToolUse' || name.startsWith('PostToolUse'))) {
+        const a = s.agents.get(ev.agent_id);
+        if (a)
+            a.tool = name === 'PreToolUse' ? toolText(ev.tool_name, ev.tool_input) : null;
+        return null;
+    }
+
     switch (name) {
     case 'UserPromptSubmit':
+        s.status = 'working';
+        s.tool = null;
+        if (!/^\s*</.test(ev.prompt ?? '')) // "<task-notification>…" and friends are Claude Code talking, not you
+            remember(s, 'user', ev.prompt);
+        break;
     case 'PostToolUse':
     case 'PostToolUseFailure':
         s.status = 'working';
@@ -97,10 +129,25 @@ export function apply(state, ev) {
             return null;
         s.status = 'waiting';
         return 'attention';
+    case 'SubagentStart':
+        // ponytail: an agent only leaves on SubagentStop/SessionEnd/dead claude; an interrupted agent may linger.
+        if (ev.agent_id)
+            s.agents.set(ev.agent_id, {id: ev.agent_id, type: ev.agent_type || 'agent', tool: null});
+        break;
+    case 'SubagentStop': {
+        const a = s.agents.get(ev.agent_id);
+        if (a) {
+            s.agents.delete(ev.agent_id);
+            remember(s, 'agent', ev.last_assistant_message, a.type);
+        }
+        break;
+    }
     case 'Stop':
         s.status = 'done';
         s.tool = null;
-        return 'done';
+        remember(s, 'assistant', ev.last_assistant_message);
+        // A background subagent can outlive the turn: the real "done" comes with the next Stop.
+        return s.agents.size ? null : 'done';
     case 'StopFailure':
         s.status = 'error';
         s.error = ev.error_type ?? 'unknown';
@@ -122,9 +169,15 @@ export function prune(state, alive) {
     }
 }
 
+// Running subagents keep a finished-looking session busy.
+export function effectiveStatus(s) {
+    return s.agents.size && (s.status === 'done' || s.status === 'idle') ? 'working' : s.status;
+}
+
 export function statusText(s) {
-    switch (s.status) {
-    case 'working': return s.tool ?? 'Working…';
+    const n = s.agents.size;
+    switch (effectiveStatus(s)) {
+    case 'working': return s.tool ?? (n ? `${n} agent${n > 1 ? 's' : ''} running` : 'Working…');
     case 'waiting': return 'Needs you';
     case 'done': return 'Done';
     case 'error': return `Error: ${s.error}`;
@@ -132,12 +185,14 @@ export function statusText(s) {
     }
 }
 
+export const agentLine = a => `${a.type} · ${a.tool ?? 'working'}`;
+
 // What the collapsed pill shows: the most urgent session wins.
 export function summary(state) {
     const all = [...state.sessions.values()];
     if (!all.length)
         return null;
-    const top = all.reduce((a, b) => (RANK[b.status] > RANK[a.status] ? b : a));
+    const top = all.reduce((a, b) => (RANK[effectiveStatus(b)] > RANK[effectiveStatus(a)] ? b : a));
     const count = all.length > 1 ? `  ·  ${all.length}` : '';
-    return {status: top.status, text: statusText(top) + count};
+    return {status: effectiveStatus(top), text: statusText(top) + count};
 }
