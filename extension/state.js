@@ -26,8 +26,23 @@ export function resolves(req, ev) {
         return false;
     if (SETTLES.has(ev.hook_event_name))
         return true;
-    return !!ev.hook_event_name?.startsWith('PostToolUse') &&
-        JSON.stringify(ev.tool_input) === JSON.stringify(req.tool_input);
+    // Subset match: answering a question in the terminal adds `answers`/`annotations` to tool_input.
+    return !!ev.hook_event_name?.startsWith('PostToolUse') && ev.tool_name === req.tool_name &&
+        Object.entries(req.tool_input ?? {}).every(([k, v]) => JSON.stringify(ev.tool_input?.[k]) === JSON.stringify(v));
+}
+
+export const isQuestion = req => req.tool_name === 'AskUserQuestion' && Array.isArray(req.tool_input?.questions);
+
+export const pendingLabel = req => (isQuestion(req) ? req.tool_input.questions[0].question : `Allow ${req.tool_name}?`);
+
+// Claude Code takes the answer as {question text: "label" | "a, b"} merged into the tool input.
+// picks[i] is the Set of labels chosen for question i.
+export function answerDecision(req, picks) {
+    const answers = {};
+    req.tool_input.questions.forEach((q, i) => {
+        answers[q.question] = q.options.map(o => o.label).filter(l => picks[i].has(l)).join(', ');
+    });
+    return {behavior: 'allow', updatedInput: {...req.tool_input, answers}};
 }
 
 // "Always" applies Claude's own suggestions (the terminal's "don't ask again"), minus mode switches.

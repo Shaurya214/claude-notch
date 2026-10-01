@@ -31,6 +31,13 @@ A personal tool for seeing what every Claude Code session is doing and answering
 5. "Always" returns `updatedPermissions` set to Claude's own `permission_suggestions`, minus `setMode`, so the notch never flips you into accept-edits.
 6. `Notification(permission_prompt)` follows every request. It doesn't re-alert while the session is already waiting.
 
+## Questions (`AskUserQuestion`), verified against Claude Code 2.1.286
+- A question arrives as an ordinary `PermissionRequest` with `tool_name: AskUserQuestion` and `tool_input.questions[]` (`question`, `header`, `options[{label, description}]`, `multiSelect`). The docs don't mention this, so it was found by experiment.
+- The hook answers it by returning `{behavior: "allow", updatedInput: {...tool_input, answers}}`, where `answers` maps each question's text to the chosen label, or `"a, b"` (in option order) for multi-select. Claude shows it as the user's answer.
+- UI: a lone single-select question answers on click. Anything else (several questions or multi-select) toggles picks, and Submit enables once every question has one.
+- "Answer in terminal" replies `{}`, which closes the card and leaves Claude's dialog to handle it. Free text ("Other") is not offered in the notch.
+- Answering in the terminal makes `PostToolUse` arrive with extra `answers` and `annotations` keys in `tool_input`. Resolution therefore matches `tool_name` plus a subset of the request's `tool_input` keys, not equality.
+
 ## Failure modes
 - **Extension not running:** connect fails, the hook exits 0 with no output, and Claude behaves normally.
 - **Extension disabled mid-request:** pending connections are closed. The hooks see EOF and the terminal dialog takes over.

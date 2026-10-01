@@ -66,6 +66,19 @@
   padding: 6px 8px;
 }
 
+.claude-notch-question { font-weight: bold; margin-top: 4px; }
+
+.claude-notch-opt {
+  background-color: #222;
+  border-radius: 10px;
+  padding: 7px 10px;
+  border: 2px solid transparent;
+}
+
+.claude-notch-opt:hover { background-color: #2f2f2f; }
+.claude-notch-opt:checked { border-color: #d97757; background-color: #2b211d; }
+.claude-notch-opt-label { font-weight: bold; }
+
 .claude-notch-buttons { spacing: 8px; }
 
 .claude-notch-btn {

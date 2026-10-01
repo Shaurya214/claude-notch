@@ -39,11 +39,14 @@ def serve(replies):
             conn.sendall(reply)
 
 
-t = threading.Thread(target=serve, args=([b'{"behavior": "allow"}\n', b'{}\n'],))
+answer = {'behavior': 'allow', 'updatedInput': {'questions': [], 'answers': {'Which?': 'A, B'}}}
+t = threading.Thread(target=serve, args=([b'{"behavior": "allow"}\n', b'{}\n', json.dumps(answer).encode() + b'\n'],))
 t.start()
 out = json.loads(run(stdin=perm))
 assert out == {'hookSpecificOutput': {'hookEventName': 'PermissionRequest', 'decision': {'behavior': 'allow'}}}, out
 assert run(stdin=perm) == '', 'empty decision = ask in terminal'
+out = json.loads(run(stdin=perm))
+assert out['hookSpecificOutput']['decision'] == answer, 'question answers pass through untouched'
 t.join()
 assert seen[0]['tool_input'] == {'command': 'ls'} and 'pids' in seen[0] and 'claude_pid' in seen[0]
 

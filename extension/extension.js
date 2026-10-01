@@ -8,7 +8,10 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {newState, apply, prune, summary, statusText, preview, resolves, decision, alwaysRules} from './state.js';
+import {
+    newState, apply, prune, summary, statusText, preview, resolves, decision, alwaysRules,
+    isQuestion, pendingLabel, answerDecision,
+} from './state.js';
 
 // The shell already promisifies DataInputStream.read_line_async (resolves to [bytes, length]).
 const SOUNDS = {done: 'complete', attention: 'message-new-instant'};
@@ -116,15 +119,16 @@ export default class ClaudeNotch extends Extension {
         this._drop(p);
     }
 
-    _reply(p, kind) {
-        const bytes = new TextEncoder().encode(`${JSON.stringify(decision(kind, p.ev))}\n`);
+    // payload: a hook decision, or {} to leave it to the terminal dialog.
+    _reply(p, payload) {
+        const bytes = new TextEncoder().encode(`${JSON.stringify(payload)}\n`);
         try {
             p.conn.get_output_stream().write_all(bytes, null);
         } catch (e) {
             logError(e, 'claude-notch: hook went away before the answer'); // terminal dialog still works
         }
         const s = this._state.sessions.get(p.ev.session_id);
-        if (s)
+        if (s && payload.behavior)
             s.status = 'working';
         this._drop(p);
     }
@@ -170,7 +174,7 @@ export default class ClaudeNotch extends Extension {
         this._pill.container.visible = !!sum;
         if (sum) {
             this._dot.style_class = `claude-notch-dot claude-notch-${sum.status}`;
-            this._label.text = this._pending.length ? `Allow ${this._pending[0].ev.tool_name}?` : sum.text;
+            this._label.text = this._pending.length ? pendingLabel(this._pending[0].ev) : sum.text;
         }
 
         const show = !!sum && this._expanded;
@@ -209,29 +213,95 @@ export default class ClaudeNotch extends Extension {
     _renderPerms() {
         this._permsShown = this._pending;
         this._perms.destroy_all_children();
-        for (const p of this._pending) {
-            const card = new St.BoxLayout({style_class: 'claude-notch-perm', vertical: true});
-            card.add_child(new St.Label({
-                text: `${GLib.path_get_basename(p.ev.cwd ?? '')} wants to use ${p.ev.tool_name}`,
-                style_class: 'claude-notch-project',
-            }));
-            const pre = new St.Label({text: preview(p.ev.tool_name, p.ev.tool_input), style_class: 'claude-notch-preview'});
-            pre.clutter_text.set({line_wrap: true, line_wrap_mode: Pango.WrapMode.WORD_CHAR, ellipsize: Pango.EllipsizeMode.NONE});
-            card.add_child(pre);
-            const buttons = new St.BoxLayout({style_class: 'claude-notch-buttons', x_align: Clutter.ActorAlign.END});
-            const add = (label, kind, cls = '') => {
-                const b = new St.Button({label, style_class: `claude-notch-btn ${cls}`});
-                b.connect('clicked', () => this._reply(p, kind));
-                buttons.add_child(b);
-            };
-            add('Deny', 'deny', 'claude-notch-deny');
-            if (alwaysRules(p.ev).length)
-                add('Always', 'always');
-            add('Allow', 'allow', 'claude-notch-allow');
-            card.add_child(buttons);
-            this._perms.add_child(card);
-        }
+        for (const p of this._pending)
+            this._perms.add_child(isQuestion(p.ev) ? this._questionCard(p) : this._permCard(p));
         this._perms.visible = this._pending.length > 0;
+    }
+
+    _wrapped(text, styleClass) {
+        const l = new St.Label({text, style_class: styleClass});
+        l.clutter_text.set({line_wrap: true, line_wrap_mode: Pango.WrapMode.WORD_CHAR, ellipsize: Pango.EllipsizeMode.NONE});
+        return l;
+    }
+
+    _button(buttons, label, cls, onClick) {
+        const b = new St.Button({label, style_class: `claude-notch-btn ${cls}`});
+        b.connect('clicked', onClick);
+        buttons.add_child(b);
+        return b;
+    }
+
+    _permCard(p) {
+        const card = new St.BoxLayout({style_class: 'claude-notch-perm', vertical: true});
+        card.add_child(new St.Label({
+            text: `${GLib.path_get_basename(p.ev.cwd ?? '')} wants to use ${p.ev.tool_name}`,
+            style_class: 'claude-notch-project',
+        }));
+        card.add_child(this._wrapped(preview(p.ev.tool_name, p.ev.tool_input), 'claude-notch-preview'));
+        const buttons = new St.BoxLayout({style_class: 'claude-notch-buttons', x_align: Clutter.ActorAlign.END});
+        this._button(buttons, 'Deny', 'claude-notch-deny', () => this._reply(p, decision('deny', p.ev)));
+        if (alwaysRules(p.ev).length)
+            this._button(buttons, 'Always', '', () => this._reply(p, decision('always', p.ev)));
+        this._button(buttons, 'Allow', 'claude-notch-allow', () => this._reply(p, decision('allow', p.ev)));
+        card.add_child(buttons);
+        return card;
+    }
+
+    // AskUserQuestion: one option click answers a lone single-select question; otherwise pick, then Submit.
+    // Free-text ("Other") answers stay in the terminal.
+    _questionCard(p) {
+        const qs = p.ev.tool_input.questions;
+        const picks = qs.map(() => new Set());
+        const instant = qs.length === 1 && !qs[0].multiSelect;
+        const card = new St.BoxLayout({style_class: 'claude-notch-perm', vertical: true});
+        card.add_child(new St.Label({
+            text: `${GLib.path_get_basename(p.ev.cwd ?? '')} asks`,
+            style_class: 'claude-notch-project',
+        }));
+        const buttons = new St.BoxLayout({style_class: 'claude-notch-buttons', x_align: Clutter.ActorAlign.END});
+        let submit = null;
+        const sync = () => {
+            const ready = picks.every(s => s.size > 0);
+            submit.reactive = ready;
+            submit.opacity = ready ? 255 : 90;
+        };
+
+        qs.forEach((q, i) => {
+            card.add_child(this._wrapped(q.multiSelect ? `${q.question} (pick any)` : q.question, 'claude-notch-question'));
+            const opts = q.options.map(o => {
+                const box = new St.BoxLayout({vertical: true, x_expand: true, x_align: Clutter.ActorAlign.FILL});
+                box.add_child(new St.Label({text: o.label, style_class: 'claude-notch-opt-label', x_align: Clutter.ActorAlign.START}));
+                if (o.description) {
+                    const d = this._wrapped(o.description, 'claude-notch-muted');
+                    d.x_align = Clutter.ActorAlign.START;
+                    box.add_child(d);
+                }
+                const b = new St.Button({child: box, style_class: 'claude-notch-opt', x_expand: true});
+                b.connect('clicked', () => {
+                    if (q.multiSelect && picks[i].has(o.label))
+                        picks[i].delete(o.label);
+                    else if (q.multiSelect)
+                        picks[i].add(o.label);
+                    else
+                        picks[i] = new Set([o.label]);
+                    opts.forEach(([btn, label]) => (btn.checked = picks[i].has(label)));
+                    if (instant)
+                        this._reply(p, answerDecision(p.ev, picks));
+                    else
+                        sync();
+                });
+                card.add_child(b);
+                return [b, o.label];
+            });
+        });
+
+        this._button(buttons, 'Answer in terminal', '', () => this._reply(p, {}));
+        if (!instant) {
+            submit = this._button(buttons, 'Submit', 'claude-notch-allow', () => this._reply(p, answerDecision(p.ev, picks)));
+            sync();
+        }
+        card.add_child(buttons);
+        return card;
     }
 
     _renderRows() {

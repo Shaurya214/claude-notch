@@ -1,5 +1,5 @@
 // Run: gjs -m tests/test_state.js
-import {newState, apply, prune, summary, preview, resolves, decision} from '../extension/state.js';
+import {newState, apply, prune, summary, preview, resolves, decision, isQuestion, pendingLabel, answerDecision} from '../extension/state.js';
 
 function eq(a, b, msg) {
     if (JSON.stringify(a) !== JSON.stringify(b))
@@ -35,12 +35,26 @@ eq(summary(st), null, 'session end removes');
 
 eq(preview('Edit', {file_path: '/a/b.js', new_string: 'x\ny'}), 'Edit: /a/b.js\nx\ny', 'edit preview');
 
-const req = {session_id: 'a', tool_input: {command: 'ls'},
+const req = {session_id: 'a', tool_name: 'Bash', tool_input: {command: 'ls'},
     permission_suggestions: [{type: 'addRules', rules: []}, {type: 'setMode', mode: 'acceptEdits'}]};
-eq(resolves(req, {session_id: 'a', hook_event_name: 'PostToolUse', tool_input: {command: 'ls'}}), true, 'answered in terminal');
-eq(resolves(req, {session_id: 'a', hook_event_name: 'PostToolUse', tool_input: {command: 'pwd'}}), false, 'other tool');
+eq(resolves(req, {session_id: 'a', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: {command: 'ls'}}), true, 'answered in terminal');
+eq(resolves(req, {session_id: 'a', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: {command: 'pwd'}}), false, 'other tool');
 eq(resolves(req, {session_id: 'b', hook_event_name: 'Stop'}), false, 'other session');
 eq(resolves(req, {session_id: 'a', hook_event_name: 'Stop'}), true, 'turn ended');
-eq(decision('always', req), {behavior: 'allow', updatedPermissions: [{type: 'addRules', rules: []}]}, 'always skips setMode');
+const ask = {session_id: 'a', tool_name: 'AskUserQuestion', tool_input: {questions: [
+    {question: 'Size?', options: [{label: 'S'}, {label: 'L'}], multiSelect: false},
+    {question: 'Toppings?', options: [{label: 'Cheese'}, {label: 'Olives'}, {label: 'Basil'}], multiSelect: true}]}};
+eq(isQuestion(ask), true, 'question detected');
+eq(isQuestion(req), false, 'bash is not a question');
+eq(pendingLabel(ask), 'Size?', 'question in pill');
+eq(pendingLabel({tool_name: 'Bash'}), 'Allow Bash?', 'tool in pill');
+const out = answerDecision(ask, [new Set(['L']), new Set(['Basil', 'Cheese'])]);
+eq(out.updatedInput.answers, {'Size?': 'L', 'Toppings?': 'Cheese, Basil'}, 'answers keyed by question, in option order');
+eq(out.updatedInput.questions, ask.tool_input.questions, 'questions kept');
+// terminal answer: PostToolUse carries extra keys, must still resolve
+eq(resolves(ask, {session_id: 'a', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+    tool_input: {...ask.tool_input, answers: {'Size?': 'S'}, annotations: {}}}), true, 'question answered in terminal');
+eq(resolves(ask, {session_id: 'a', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: ask.tool_input}), false, 'tool name must match');
+eq(decision('always', req),{behavior: 'allow', updatedPermissions: [{type: 'addRules', rules: []}]}, 'always skips setMode');
 
 print('state ok');

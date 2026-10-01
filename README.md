@@ -4,6 +4,7 @@ A dynamic-island style notch for **Claude Code on Linux (GNOME 46, Wayland)**. I
 
 - Live status per session (working, needs you, done, error) and the current tool, e.g. `Bash: npm test`
 - Permission approvals from the notch
+- Claude's multiple-choice questions (`AskUserQuestion`) appear in the notch with their options: click one to answer, or pick several and press Submit. Free-text answers stay in the terminal ("Answer in terminal" button)
 - Usage meters: 5-hour and 7-day limits, context % per session (Pro/Max)
 - Click a session to focus its terminal window
 - Sound and a pulse when Claude finishes or needs you
