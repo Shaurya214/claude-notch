@@ -1,0 +1,83 @@
+.claude-notch-pill {
+  background-color: #000;
+  border-radius: 999px;
+  padding: 0 14px;
+  margin: 2px 0;
+  spacing: 8px;
+  color: #fff;
+}
+
+.claude-notch-pill-label {
+  max-width: 260px;
+  font-weight: bold;
+}
+
+.claude-notch-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 5px;
+  background-color: #777;
+}
+
+.claude-notch-working { background-color: #d97757; }
+.claude-notch-waiting { background-color: #ffc53d; }
+.claude-notch-done { background-color: #4cc38a; }
+.claude-notch-error { background-color: #ff5c5c; }
+
+.claude-notch-card {
+  background-color: #000;
+  color: #fff;
+  border-radius: 20px;
+  padding: 14px;
+  spacing: 10px;
+  width: 420px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+.claude-notch-section { spacing: 6px; }
+
+.claude-notch-usage {
+  color: #aaa;
+  font-size: 9pt;
+}
+
+.claude-notch-row {
+  border-radius: 10px;
+  padding: 6px 8px;
+}
+
+.claude-notch-row:hover { background-color: #1c1c1c; }
+.claude-notch-row-box { spacing: 8px; }
+.claude-notch-project { font-weight: bold; }
+.claude-notch-muted { color: #999; }
+
+.claude-notch-perm {
+  background-color: #141414;
+  border-radius: 14px;
+  padding: 10px;
+  spacing: 8px;
+}
+
+.claude-notch-preview {
+  font-family: monospace;
+  font-size: 9pt;
+  background-color: #222;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.claude-notch-buttons { spacing: 8px; }
+
+.claude-notch-btn {
+  border-radius: 9px;
+  padding: 5px 14px;
+  background-color: #2b2b2b;
+  color: #fff;
+  font-weight: bold;
+}
+
+.claude-notch-btn:hover { background-color: #3a3a3a; }
+.claude-notch-allow { background-color: #1f7a4d; }
+.claude-notch-allow:hover { background-color: #26935d; }
+.claude-notch-deny { background-color: #8a2525; }
+.claude-notch-deny:hover { background-color: #a32d2d; }

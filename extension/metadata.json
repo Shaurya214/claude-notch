@@ -1,0 +1,7 @@
+{
+  "uuid": "claude-notch@shaurya214.github.io",
+  "name": "Claude Notch",
+  "description": "Dynamic-island style status for Claude Code sessions: live activity, permission approvals, usage limits.",
+  "shell-version": ["46"],
+  "url": "https://github.com/Shaurya214/claude-notch"
+}
